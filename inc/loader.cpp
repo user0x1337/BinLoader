@@ -1,6 +1,7 @@
 #include <bfd.h>
 #include "loader.h"
 
+
 void unload_binary(Binary *bin) {
     size_t i;
     Section *sec;
@@ -11,6 +12,55 @@ void unload_binary(Binary *bin) {
             free(sec->bytes);
         }
     }
+}
+
+static int load_symbols_bfd(bfd *bfd_h, Binary *bin) {
+    int ret;
+    long n, nsyms, i;
+    asymbol **bfd_symtab;
+    Symbol *sym;
+
+    bfd_symtab = NULL;
+
+    n = bfd_get_symtab_upper_bound(bfd_h);
+    if (n < 0) {
+        fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
+        goto fail;
+    } else if (n) {
+        bfd_symtab = (asymbol**) malloc(n);
+        if (!bfd_symtab) {
+            fprintf(stderr, "Out of Memory\n");
+            goto fail;
+        }
+
+        nsyms = bfd_canonicalize_symtab(bfd_h, bfd_symtab);
+        if (nsyms < 0) {
+            fprintf(stderr, "failed to read symtab (%s)\n", bfd_errmsg(bfd_get_error()));
+            goto fail;
+        }
+        for (i = 0; i < nsyms; i++) {
+            if (bfd_symtab[i]->flags & BSF_FUNCTION) {
+                bin->symbols.emplace_back();
+                sym = &bin->symbols.back();
+                sym->type = Symbol::SYM_TYPE_FUNC;
+                sym->name = std::string(bfd_symtab[i]->name);
+                sym->addr = bfd_asymbol_value(bfd_symtab[i]);
+            }
+        }
+    }
+
+    ret = 0;
+    goto cleanup;
+
+
+    fail:
+        ret = -1;
+    cleanup:
+        if (bfd_symtab) {
+            free(bfd_symtab);
+        }
+
+        return ret;
 }
 
 static bfd* open_bfd(std::string &fname) {
